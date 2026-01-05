@@ -1,0 +1,230 @@
+import random
+import time
+
+# ---------------- SAFE TKINTER IMPORT ----------------
+try:
+    import tkinter as tk
+    from tkinter import messagebox
+    TK_AVAILABLE = True
+except ModuleNotFoundError:
+    TK_AVAILABLE = False
+
+
+# ================= GAME LOGIC =================
+class Game:
+    def __init__(self, players):
+        random.shuffle(players)
+        self.players = players
+        self.alive = players.copy()
+        self.roles = {}
+
+        self.roles[players[0]] = "Impostor"
+        self.roles[players[1]] = "Detective"
+        self.roles[players[2]] = "Medic"
+        for p in players[3:]:
+            self.roles[p] = "Crewmate"
+
+        self.you = players[0]
+        self.round = 1
+        self.protected = None
+
+    def impostor_kill(self):
+        impostor = [p for p in self.alive if self.roles[p] == "Impostor"][0]
+        targets = [p for p in self.alive if p != impostor and p != self.protected]
+        if targets:
+            victim = random.choice(targets)
+            self.alive.remove(victim)
+            return victim
+        return None
+
+    def ai_vote(self):
+        impostor = [p for p in self.alive if self.roles[p] == "Impostor"][0]
+        votes = []
+
+        for p in self.alive:
+            if p == self.you:
+                continue
+            if self.roles[p] != "Impostor":
+                votes.append(impostor)
+            else:
+                votes.append(random.choice([x for x in self.alive if x != p]))
+
+        return max(set(votes), key=votes.count) if votes else None
+
+
+# ================= GUI =================
+if TK_AVAILABLE:
+
+    class GameUI:
+        def __init__(self, root):
+            self.root = root
+            self.root.title("Shadow Protocol")
+            self.root.geometry("1200x800")
+            self.root.resizable(False, False)
+
+            self.game = None
+            self.entries = []
+
+            self.start_screen()
+
+        # ---------- START ----------
+        def start_screen(self):
+            self.clear()
+
+            tk.Label(self.root, text="SHADOW PROTOCOL",
+                     font=("Arial", 36, "bold")).pack(pady=30)
+
+            tk.Label(self.root, text="Enter at least 4 player names",
+                     font=("Arial", 16)).pack(pady=10)
+
+            frame = tk.Frame(self.root)
+            frame.pack(pady=10)
+
+            self.entries.clear()
+            for _ in range(6):
+                e = tk.Entry(frame, font=("Arial", 14), width=25)
+                e.pack(pady=5)
+                self.entries.append(e)
+
+            tk.Button(self.root, text="Start Game",
+                      font=("Arial", 18),
+                      command=self.start_game).pack(pady=25)
+
+        def start_game(self):
+            players = [e.get() for e in self.entries if e.get()]
+            if len(players) < 4:
+                messagebox.showerror("Error", "At least 4 players required")
+                return
+
+            self.game = Game(players)
+            messagebox.showinfo(
+                "Your Role",
+                f"You are the {self.game.roles[self.game.you]}"
+            )
+            self.round_screen()
+
+        # ---------- ROUND ----------
+        def round_screen(self):
+            self.clear()
+            self.game.protected = None
+
+            tk.Label(self.root, text=f"Round {self.game.round}",
+                     font=("Arial", 28, "bold")).pack(pady=20)
+
+            cards = tk.Frame(self.root)
+            cards.pack(pady=30)
+
+            for p in self.game.alive:
+                card = tk.Label(cards, text=p,
+                                bg="#1e1e1e", fg="white",
+                                width=18, height=6,
+                                font=("Arial", 14, "bold"))
+                card.pack(side="left", padx=10)
+
+            action = tk.Frame(self.root)
+            action.pack(pady=20)
+
+            role = self.game.roles[self.game.you]
+
+            if role == "Medic":
+                tk.Label(action, text="Choose someone to protect").pack()
+                for p in self.game.alive:
+                    tk.Button(action, text=p,
+                              command=lambda x=p: self.set_protect(x)).pack(side="left", padx=5)
+
+            if role == "Detective":
+                tk.Label(action, text="Investigate a player").pack()
+                for p in self.game.alive:
+                    tk.Button(action, text=p,
+                              command=lambda x=p: self.investigate(x)).pack(side="left", padx=5)
+
+            tk.Button(self.root, text="Proceed to Voting",
+                      font=("Arial", 16),
+                      command=self.voting_screen).pack(pady=30)
+
+        # ---------- ACTIONS ----------
+        def set_protect(self, name):
+            self.game.protected = name
+            messagebox.showinfo("Medic", f"{name} is protected")
+
+        def investigate(self, name):
+            messagebox.showinfo("Detective",
+                                f"{name} is {self.game.roles[name]}")
+
+        # ---------- VOTING ----------
+        def voting_screen(self):
+            self.clear()
+
+            tk.Label(self.root, text="Voting Phase",
+                     font=("Arial", 28, "bold")).pack(pady=20)
+
+            for p in self.game.alive:
+                if p != self.game.you:
+                    tk.Button(self.root, text=f"Vote {p}",
+                              font=("Arial", 16),
+                              command=lambda x=p: self.resolve_vote(x)).pack(pady=6)
+
+            tk.Button(self.root, text="Skip Vote",
+                      command=self.resolve_vote).pack(pady=15)
+
+        def resolve_vote(self, player_vote=None):
+            ai_vote = self.game.ai_vote()
+            votes = [player_vote, ai_vote]
+            votes = [v for v in votes if v]
+
+            if votes:
+                out = max(set(votes), key=votes.count)
+                if out in self.game.alive:
+                    self.game.alive.remove(out)
+                    messagebox.showwarning("Vote Result",
+                                           f"{out} was voted out")
+
+            victim = self.game.impostor_kill()
+            if victim:
+                messagebox.showwarning("Eliminated",
+                                       f"{victim} was eliminated")
+
+            self.check_win()
+
+        # ---------- WIN CHECK ----------
+        def check_win(self):
+            impostors = [p for p in self.game.alive
+                         if self.game.roles[p] == "Impostor"]
+
+            if not impostors:
+                self.end_screen("CREWMATES WIN!")
+                return
+
+            if len(self.game.alive) <= 2:
+                self.end_screen("IMPOSTOR WINS!")
+                return
+
+            self.game.round += 1
+            self.round_screen()
+
+        # ---------- END ----------
+        def end_screen(self, text):
+            self.clear()
+            tk.Label(self.root, text="GAME OVER",
+                     font=("Arial", 36, "bold")).pack(pady=40)
+            tk.Label(self.root, text=text,
+                     font=("Arial", 22)).pack(pady=10)
+
+            tk.Button(self.root, text="Play Again",
+                      font=("Arial", 18),
+                      command=self.start_screen).pack(pady=30)
+
+        # ---------- UTILITY ----------
+        def clear(self):
+            for w in self.root.winfo_children():
+                w.destroy()
+
+
+# ================= RUN =================
+if __name__ == "__main__":
+    if not TK_AVAILABLE:
+        print("Tkinter not available. Run locally.")
+    else:
+        root = tk.Tk()
+        GameUI(root)
+        root.mainloop()
